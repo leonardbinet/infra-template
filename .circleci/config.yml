@@ -1,0 +1,114 @@
+version: 2
+
+defaults: &defaults
+    docker:
+      - image: cimg/node:17.4.0
+    working_directory: ~/project
+    environment:
+      TF_IN_AUTOMATION: true
+
+aws-install: &aws-install
+  run:
+    name: aws-install
+    command: |
+      curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+      unzip awscliv2.zip
+      sudo ./aws/install
+
+tf-install: &tf-install
+  run:
+    name: tf-install
+    command: |
+      wget https://releases.hashicorp.com/terraform/0.12.20/terraform_0.12.20_linux_amd64.zip
+      sudo unzip terraform_0.12.20_linux_amd64.zip -d /usr/bin
+      rm terraform_0.12.20_linux_amd64.zip
+      terraform --version
+
+yarn-install: &yarn-install
+  run:
+    name: yarn-install
+    command: |
+      curl -o- -L https://yarnpkg.com/install.sh | bash
+
+jobs:
+  plan-apply:
+    <<: *defaults
+    # requires terraform backend to be created for ci
+    # ideally, S3 backend would be created for each build (to allow simultaneous builds), but I blocked on this 
+    # https://github.com/circleci/circleci-docs/issues/6355
+    steps:
+      - checkout
+      - *aws-install
+      - *tf-install
+      - *yarn-install
+      - run:
+          name: terraform init & plan
+          command: |
+            STAGE="ci" yarn run tf:service:init -reconfigure -input=false
+            STAGE="ci" yarn run tf:service:plan -out plan.tfplan
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - .
+
+  apply:
+    <<: *defaults
+    steps:
+      - *aws-install
+      - *tf-install
+      - *yarn-install
+      - attach_workspace:
+          at: ~/project
+      - run:
+          name: terraform
+          command: |
+            STAGE="ci" yarn run tf:terraform apply -auto-approve plan.tfplan
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - .
+
+  plan-destroy:
+    <<: *defaults
+    steps:
+      - *aws-install
+      - *tf-install
+      - *yarn-install
+      - attach_workspace:
+          at: ~/project
+      - run:
+          name: terraform create destroy plan
+          command: |
+            STAGE="ci" yarn run tf:service:plan -destroy -out plan.tfdestroy
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - .
+
+  destroy:
+    <<: *defaults
+    steps:
+      - *aws-install
+      - *tf-install
+      - *yarn-install
+      - attach_workspace:
+          at: ~/project
+      - run:
+          name: terraform destroy
+          command: |
+            STAGE="ci" yarn run tf:terraform apply -auto-approve plan.tfdestroy
+
+workflows:
+  version: 2
+  plan_approve_apply:
+    jobs:
+      - plan-apply
+      - apply:
+          requires:
+            - plan-apply
+      - plan-destroy:
+          requires:
+            - apply
+      - destroy:
+          requires:
+            - plan-destroy
