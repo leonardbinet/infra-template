@@ -1,6 +1,5 @@
 AWS Lambda Serverless Reference
 ===============================
-[![Travis Status][trav_img]][trav_site]
 
 A simple "hello world" reference app for the [`FormidableLabs/serverless/aws`][FormidableLabs/serverless/aws] Terraform module, using the [serverless][] framework targeting an AWS Lambda deploy.
 
