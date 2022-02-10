@@ -1,6 +1,6 @@
 variable "region" {
   description = "The deploy target region in AWS"
-  default     = "us-east-1"
+  default     = "eu-west-3"
 }
 
 variable "stage" {

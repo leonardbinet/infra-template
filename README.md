@@ -18,7 +18,7 @@ A simple "hello world" reference app for the [`FormidableLabs/serverless/aws`][F
   - [Environment Variables](#environment-variables)
   - [User Roles](#user-roles)
 - [Installation](#installation)
-  - [Node.js (Runtime)](#nodejs-runtime)
+  - [Node.js](#nodejs)
   - [AWS (Deployment)](#aws-deployment)
     - [AWS Tools](#aws-tools)
     - [Terraform](#terraform)
@@ -26,16 +26,10 @@ A simple "hello world" reference app for the [`FormidableLabs/serverless/aws`][F
       - [In Environment](#in-environment)
       - [Saved to Local Disk](#saved-to-local-disk)
       - [AWS Vault](#aws-vault)
-- [Development](#development)
-  - [Node.js](#nodejs)
-  - [Lambda Offline](#lambda-offline)
 - [Support Stack Provisioning (Superuser)](#support-stack-provisioning-superuser)
   - [Bootstrap Stack](#bootstrap-stack)
   - [Service Stack](#service-stack)
-- [Serverless Deployment (IAM Roles)](#serverless-deployment-iam-roles)
-  - [Admin Deployment](#admin-deployment)
-  - [User Deployment](#user-deployment)
-- [`terraform-aws-serverless` Development](#terraform-aws-serverless-development)
+- [Serverless Deployment via generated IAM Roles](#serverless-deployment-via-generated-iam-roles)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -146,11 +140,11 @@ We rely on IAM roles to limit privileges to the minimum necessary to provision, 
 
 ## Installation
 
-### Node.js (Runtime)
+First, modify the service name, and default aws region to suit your needs, in `package.json` `env` line.
 
-Our application is a Node.js server.
+### Node.js
 
-First, make sure you have our version of node (determined by `.nvmrc`) that matches our Lambda target (you will need to have [`nvm`](https://github.com/creationix/nvm) installed):
+First, make sure you have our version of node (determined by `.nvmrc`, you will need to have [`nvm`](https://github.com/creationix/nvm) installed):
 
 ```sh
 $ nvm use
@@ -273,53 +267,6 @@ $ STAGE=sandbox aws-vault exec FIRST.LAST --no-session -- STAGE=sandbox yarn tf:
 ```
 
 In practice, it is probably easier in the meantime to just always add the `--no-session` flag when using `aws-vault exec`.
-
-## Development
-
-We have several options for developing a service locally, with different advantages. Here's a quick list of application ports / running commands:
-
-* `3000`: Node server via `nodemon`. (`yarn node:localdev`)
-* `3001`: Lambda offline local simulation. (`yarn lambda:localdev`)
-
-### Node.js
-
-Run the server straight up in your terminal with Node.js via `nodemon` for instant restarts on changes. Note that because we effectively run the same server at different URL bases you must separately specify them.
-
-```sh
-# Base server
-$ yarn node:localdev
-
-# Different scenarios that reuse base.js
-$ BASE_URL=/canary yarn node:localdev
-$ BASE_URL=/vpc yarn node:localdev
-$ BASE_URL=/layers yarn node:localdev
-
-# Other scenarios that use a different js file.
-$ SCENARIO=xray yarn node:localdev
-```
-
-See it in action!:
-
-- [http://127.0.0.1:3000/base/hello.json](http://127.0.0.1:3000/base/hello.json)
-
-Or from the command line:
-
-```sh
-$ curl -X POST "http://127.0.0.1:3000/base/hello.json" \
-  -H "Content-Type: application/json"
-```
-
-### Lambda Offline
-
-Run the server in a Lambda simulation via the [`serverless-offline`](https://github.com/dherault/serverless-offline) plugin. In contrast to `node:localdev` above, _all_ routes and functions are loaded together.
-
-```sh
-$ yarn lambda:localdev
-```
-
-See it in action!:
-
-- [http://127.0.0.1:3001/base/hello.json](http://127.0.0.1:3001/base/hello.json)
 
 ## Support Stack Provisioning (Superuser)
 
@@ -449,145 +396,14 @@ From there, you can visualize with:
 $ STAGE=sandbox yarn run -s tf:terraform graph | dot -Tsvg > ~/Desktop/infrastructure.svg
 ```
 
-## Serverless Deployment (IAM Roles)
+## Serverless Deployment via generated IAM Roles
 
-This section discusses developers getting code and secrets deployed (manually from local machines to an AWS `development` playground or automated via CI).
+In previous section, terraform provisions IAM groups to whom users should be attached to deploy severless applications `tf-${SERVICE_NAME}-${STAGE}-(admin|developer|ci)`. 
 
-All commands in this section should be run by AWS users with attached IAM groups provisioned by our support stack of `tf-${SERVICE_NAME}-${STAGE}-(admin|developer|ci)`. The configuration for this section is controlled by: [`serverless.yml`](./serverless.yml)
+The configuration is controlled by: [`serverless.yml`](./serverless.yml)
 
 > ⚠️ **Prod/Real World Warning**: This reference application deploys from local laptops for ease of instruction. However, our laptops are usually a different operating system than the target Lambda Linux execution environment. This is an issue for binary dependencies in `node_modules` which are OS-specific and zipped up and shipped with the Lambda application.
 >
 > Our reference application presently does not have binary dependencies, but as a best practice for a real world Lambda application, you should not package and deploy from a different OS than your target Lambda execution environment. This means if locally deploying using an appropriate Docker setup for packaging, or using a CI/CD system that matches the Lambda OS to package and deploy the application.
 
-### Admin Deployment
-
-These actions are reserved for `-admin` users.
-
-**Create** the Lambda app. The first time through a `deploy`, an `-admin` user
-is required (to effect the underlying CloudFormation changes).
-
-```sh
-$ STAGE=sandbox yarn run lambda:deploy
-
-# **WARNING**: If using `aws-vault`, remember `--no-session`!
-$ STAGE=sandbox aws-vault exec FIRST.LAST --no-session -- STAGE=sandbox yarn lambda:deploy
-
-# Check on app and endpoints.
-$ STAGE=sandbox yarn run lambda:info
-```
-
-**Delete** the Lambda app.
-
-```sh
-# **WARNING**: Use with extreme caution!!!
-$ STAGE=sandbox yarn run lambda:_delete
-
-# Confirm (with expected error).
-$ STAGE=sandbox yarn lambda:info
-...
-
-  Serverless Error ---------------------------------------
-
-  Stack with id sls-${SERVICE_NAME}-${STAGE} does not exist
-```
-
-**Metrics**:
-
-```sh
-# Show metrics for an application
-$ STAGE=sandbox yarn run lambda:metrics
-```
-
-### User Deployment
-
-These actions can be performed by any user (`-admin|developer|ci`).
-
-Get server **information**:
-
-```sh
-$ STAGE=sandbox yarn run lambda:info
-...
-endpoints:
-  ANY - https://HASH.execute-api.AWS_REGION.amazonaws.com/STAGE/base
-  ANY - https://HASH.execute-api.AWS_REGION.amazonaws.com/STAGE/base/{proxy+}
-  ANY - https://HASH.execute-api.AWS_REGION.amazonaws.com/STAGE/xray
-  ANY - https://HASH.execute-api.AWS_REGION.amazonaws.com/STAGE/xray/{proxy+}
-...
-```
-
-See the **logs**:
-
-```sh
-$ STAGE=sandbox yarn run lambda:logs -f FUNCTION_NAME
-```
-
-_Note_: To see the logs in the AWS console, you unfortunately cannot just click on "CloudWatch > Logs" and see the relevant potential ones listed because a wildcard would be needed for `log:DescribeLogGroups|Streams`. However, if you know the log group generated name, and we **do** here, you can fill in the blanks and navigate to:
-
-```
-https://console.aws.amazon.com/cloudwatch/home?#logStream:group=/aws/lambda/sls-SERVICE_NAME-STAGE-FUNCTION_NAME;streamFilter=typeLogStreamPrefix
-```
-
-**Update** the Lambda server.
-
-```sh
-$ STAGE=sandbox yarn run lambda:deploy
-
-# **WARNING**: If using `aws-vault`, remember `--no-session`!
-$ STAGE=sandbox aws-vault exec FIRST.LAST --no-session -- STAGE=sandbox yarn lambda:deploy
-```
-
-**Rollback** to a previous Lambda deployment:
-
-If something has gone wrong, you can see the list of available states to
-roll back to with:
-
-```sh
-$ STAGE=sandbox yarn run lambda:rollback
-```
-
-Then choose a datestamp and add with the `-t` flag like:
-
-```sh
-$ STAGE=sandbox yarn run lambda:rollback -t 2019-02-07T00:35:56.362Z
-```
-
-## `terraform-aws-serverless` Development
-
-_For contributors to [FormidableLabs/serverless/aws][]_
-
-To test out a local branch of `terraform-aws-serverless`, first clone it to the relative path of `../terraform-aws-serverless` from this project's checkout. Then run the command:
-
-```sh
-$ yarn _dev:on
-```
-
-To switch to the local modules instead of published ones. Next, make sure to re-initialize Terraform to pick up the local modules:
-
-```sh
-$ STAGE=sandbox yarn run tf:service:init --reconfigure
-```
-
-Then, do all your testing of the local module. When you're ready to unwind the changes, you can do:
-
-```sh
-$ yarn _dev:off
-```
-
-To switch back to the published version. Typically then you'll do a version bump if we've published a new module. Then again re-initialize:
-
-```sh
-$ STAGE=sandbox yarn run tf:service:init --reconfigure
-```
-
-...and you're up and running the published module again!
-
-[serverless]: https://serverless.com/
-[serverless-http]: https://github.com/dougmoscrop/serverless-http
-[Terraform]: https://www.terraform.io
-[CloudFormation]: https://aws.amazon.com/cloudformation/
-[tfenv]: https://github.com/tfutils/tfenv
-[HCL]: https://www.terraform.io/docs/configuration/syntax.html
-[FormidableLabs/serverless/aws]: https://registry.terraform.io/modules/FormidableLabs/serverless/aws
-
-[trav_img]: https://api.travis-ci.com/FormidableLabs/aws-lambda-serverless-reference.svg
-[trav_site]: https://travis-ci.com/FormidableLabs/aws-lambda-serverless-reference
+This section will be detailed in more details in dedicated repository.
