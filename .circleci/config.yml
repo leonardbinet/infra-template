@@ -7,35 +7,49 @@ orbs:
 
 defaults: &defaults
     docker:
-      - image: cimg/base:latest
+      - image: cimg/base:2022.02
     working_directory: ~/project
     environment:
       TF_IN_AUTOMATION: true
 
-
-yarn-install: &yarn-install
-  run:
-    name: yarn-install
-    command: |
-      curl -o- -L https://yarnpkg.com/install.sh | bash
-
 jobs:
+  backend-create:
+    <<: *defaults
+    steps:
+      - checkout
+      - aws-cli/install
+      - node/install:
+          install-yarn: true
+      - run:
+          name: create terraform backend
+          command: |
+            STAGE="ci-<< pipeline.number >>" yarn run cf:bootstrap:create
+
+  backend-delete:
+    <<: *defaults
+    steps:
+      - checkout
+      - aws-cli/install
+      - node/install:
+          install-yarn: true
+      - run:
+          name: create terraform backend
+          command: |
+            STAGE="ci-<< pipeline.number >>" yarn run cf:bootstrap:_delete
+
   plan-apply:
     <<: *defaults
-    # requires terraform backend to be created for ci
-    # ideally, S3 backend would be created for each build (to allow simultaneous builds), but I blocked on this 
-    # https://github.com/circleci/circleci-docs/issues/6355
     steps:
       - checkout
       - aws-cli/install
       - terraform/install
       - node/install:
-        install-yarn: true
+          install-yarn: true
       - run:
           name: terraform init & plan
           command: |
-            STAGE="ci" yarn run tf:service:init -reconfigure -input=false
-            STAGE="ci" yarn run tf:service:plan -out plan.tfplan
+            STAGE="ci-<< pipeline.number >>" yarn run tf:service:init -reconfigure -input=false
+            STAGE="ci-<< pipeline.number >>" yarn run tf:service:plan -out plan.tfplan
       - persist_to_workspace:
           root: ~/project
           paths:
@@ -53,7 +67,7 @@ jobs:
       - run:
           name: terraform
           command: |
-            STAGE="ci" yarn run tf:terraform apply -auto-approve plan.tfplan
+            STAGE="ci-<< pipeline.number >>" yarn run tf:terraform apply -auto-approve plan.tfplan
       - persist_to_workspace:
           root: ~/project
           paths:
@@ -71,7 +85,7 @@ jobs:
       - run:
           name: terraform create destroy plan
           command: |
-            STAGE="ci" yarn run tf:service:plan -destroy -out plan.tfdestroy
+            STAGE="ci-<< pipeline.number >>" yarn run tf:service:plan -destroy -out plan.tfdestroy
       - persist_to_workspace:
           root: ~/project
           paths:
@@ -89,13 +103,16 @@ jobs:
       - run:
           name: terraform destroy
           command: |
-            STAGE="ci" yarn run tf:terraform apply -auto-approve plan.tfdestroy
+            STAGE="ci-<< pipeline.number >>" yarn run tf:terraform apply -auto-approve plan.tfdestroy
 
 workflows:
   version: 2
   plan_approve_apply:
     jobs:
-      - plan-apply
+      - backend-create
+      - plan-apply:
+          requires:
+            - backend-create
       - apply:
           requires:
             - plan-apply
@@ -105,3 +122,6 @@ workflows:
       - destroy:
           requires:
             - plan-destroy
+      - backend-delete:
+          requires:
+            - destroy
