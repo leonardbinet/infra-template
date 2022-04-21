@@ -1,114 +1,96 @@
-version: 2
+version: 2.1
+
+orbs:
+  aws-cli: circleci/aws-cli@2.0.6
+  terraform: circleci/terraform@3.0.1
+  node: circleci/node@5.0.0
+  swissknife: roopakv/swissknife@0.65.0
+
 
 defaults: &defaults
     docker:
-      - image: cimg/node:17.4.0
+      - image: cimg/base:2022.02
     working_directory: ~/project
     environment:
       TF_IN_AUTOMATION: true
 
-aws-install: &aws-install
-  run:
-    name: aws-install
-    command: |
-      curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-      unzip awscliv2.zip
-      sudo ./aws/install
-
-tf-install: &tf-install
-  run:
-    name: tf-install
-    command: |
-      wget https://releases.hashicorp.com/terraform/0.12.20/terraform_0.12.20_linux_amd64.zip
-      sudo unzip terraform_0.12.20_linux_amd64.zip -d /usr/bin
-      rm terraform_0.12.20_linux_amd64.zip
-      terraform --version
-
-yarn-install: &yarn-install
-  run:
-    name: yarn-install
-    command: |
-      curl -o- -L https://yarnpkg.com/install.sh | bash
-
 jobs:
-  plan-apply:
+  backend-create:
     <<: *defaults
-    # requires terraform backend to be created for ci
-    # ideally, S3 backend would be created for each build (to allow simultaneous builds), but I blocked on this 
-    # https://github.com/circleci/circleci-docs/issues/6355
     steps:
       - checkout
-      - *aws-install
-      - *tf-install
-      - *yarn-install
+      - aws-cli/install
+      - node/install:
+          install-yarn: true
       - run:
-          name: terraform init & plan
+          name: create terraform backend
           command: |
-            STAGE="ci" yarn run tf:service:init -reconfigure -input=false
-            STAGE="ci" yarn run tf:service:plan -out plan.tfplan
-      - persist_to_workspace:
-          root: ~/project
-          paths:
-            - .
+            STAGE="ci-<< pipeline.number >>" yarn run cf:bootstrap:create
+
+  backend-delete:
+    <<: *defaults
+    steps:
+      - checkout
+      - aws-cli/install
+      - node/install:
+          install-yarn: true
+      - run:
+          name: create terraform backend
+          command: |
+            STAGE="ci-<< pipeline.number >>" yarn run cf:bootstrap:_delete
 
   apply:
     <<: *defaults
     steps:
-      - *aws-install
-      - *tf-install
-      - *yarn-install
-      - attach_workspace:
-          at: ~/project
+      - checkout
+      - aws-cli/install
+      - terraform/install
+      - node/install:
+          install-yarn: true
       - run:
           name: terraform
           command: |
-            STAGE="ci" yarn run tf:terraform apply -auto-approve plan.tfplan
-      - persist_to_workspace:
-          root: ~/project
-          paths:
-            - .
+            STAGE="ci-<< pipeline.number >>" yarn run tf:service:init -reconfigure -input=false
+            STAGE="ci-<< pipeline.number >>" yarn run tf:service:apply -auto-approve
 
-  plan-destroy:
+  run-tests:
     <<: *defaults
     steps:
-      - *aws-install
-      - *tf-install
-      - *yarn-install
-      - attach_workspace:
-          at: ~/project
+      # Add your E2E testing scripts here
+      # store logs and result
       - run:
-          name: terraform create destroy plan
+          name: Run tests and simulate a fail
           command: |
-            STAGE="ci" yarn run tf:service:plan -destroy -out plan.tfdestroy
-      - persist_to_workspace:
-          root: ~/project
-          paths:
-            - .
+            exit 1 
 
   destroy:
     <<: *defaults
     steps:
-      - *aws-install
-      - *tf-install
-      - *yarn-install
-      - attach_workspace:
-          at: ~/project
+      - checkout
+      - aws-cli/install
+      - terraform/install
+      - node/install:
+          install-yarn: true
+      - swissknife/wait_for_job:
+          job-name: run-tests
+      # wait for tests to run, and proceed to destruction even though tests fail
       - run:
           name: terraform destroy
           command: |
-            STAGE="ci" yarn run tf:terraform apply -auto-approve plan.tfdestroy
+            STAGE="ci-<< pipeline.number >>" yarn run tf:service:_delete -auto-approve
 
 workflows:
-  version: 2
-  plan_approve_apply:
+  run_tests:
     jobs:
-      - plan-apply
+      - backend-create
       - apply:
           requires:
-            - plan-apply
-      - plan-destroy:
+            - backend-create
+      - run-tests:
           requires:
             - apply
-      - destroy:
+      # destroy uses swissknife/wait_for_job to wait for run-tests failure or success
+      - destroy
+      - backend-delete:
           requires:
-            - plan-destroy
+            - destroy
